@@ -11,20 +11,10 @@ import time
 import random
 import datetime
 import tqdm
-import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# 默认日期
-default_date = "20260410"
-
-# 解析命令行参数
-parser = argparse.ArgumentParser(description='下载股票数据')
-parser.add_argument('--date', type=str, default=default_date, 
-                    help=f'数据目录日期，格式: YYYYMMDD (默认: {default_date})')
-args = parser.parse_args()
-
 # 常量定义
-DATA_DIR = f'/mnt/d/forCoding_data/QuantFinance/plan_1-select_stock_by_week/originalData/{args.date}/'
+DATA_DIR = '/mnt/d/forCoding_data/QuantFinance/plan_1-select_stock_by_week/originalData/20260327/'
 STOCK_LIST_FILE = '/mnt/d/forCoding_code/QuantFinance/plan_1-select_stock_by_week/all_stock_list.csv'
 MAX_WORKERS = 6  # 进程数，控制并发度以避免封IP
 START_DATE = "2025-01-01"
