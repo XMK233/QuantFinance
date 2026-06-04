@@ -23,6 +23,7 @@ from stock_operators.daily_ar1_return_operator import DailyAR1ReturnOperator
 from stock_operators.weekly_ar1_return_operator import WeeklyAR1ReturnOperator
 from stock_operators.daily_hurst_operator import DailyHurstOperator
 from stock_operators.daily_volatility_regime_operator import DailyVolatilityRegimeOperator
+from stock_operators.air_refuel_operator import AirRefuelRuleOperator, AirRefuelScoreOperator, AirRefuelMultiTimeframeOperator
 from stock_operators.base_operator import BaseOperator
 
 class TradingStrategy:
@@ -31,6 +32,7 @@ class TradingStrategy:
     def __init__(self, db_path: str = None, enable_slow_factors: bool = False, show_factor_progress: bool = False):
         """初始化策略"""
         self.base_operator = BaseOperator(db_path)
+        self.enable_slow_factors = bool(enable_slow_factors)
         self.show_factor_progress = bool(show_factor_progress)
         
         # 初始化所有算子
@@ -46,13 +48,16 @@ class TradingStrategy:
             'pullback_ma20': PullbackMA20ReboundOperator(db_path),
             'weekly_ma_slope': WeeklyMASlopeOperator(db_path),
         }
-        if enable_slow_factors:
+        if self.enable_slow_factors:
             operators.update({
                 'daily_bb_squeeze': DailyBBSqueezeOperator(db_path),
                 'ts_daily_ar1': DailyAR1ReturnOperator(db_path),
                 'ts_weekly_ar1': WeeklyAR1ReturnOperator(db_path),
                 'ts_hurst': DailyHurstOperator(db_path),
                 'ts_vol_regime': DailyVolatilityRegimeOperator(db_path),
+                'air_refuel_rule': AirRefuelRuleOperator(db_path),
+                'air_refuel_score': AirRefuelScoreOperator(db_path),
+                'air_refuel_mt': AirRefuelMultiTimeframeOperator(db_path),
             })
         self.operators = operators
         
@@ -234,8 +239,12 @@ class TradingStrategy:
         
         recommendations = []
         
-        for code in stock_codes:
+        total_stocks = len(stock_codes)
+        progress_step = 50
+        for idx, code in enumerate(stock_codes, start=1):
             try:
+                if self.enable_slow_factors and (idx == 1 or idx % progress_step == 0 or idx == total_stocks):
+                    print(f"🐢 慢因子计算进度: {idx}/{total_stocks} (enable_slow_factors)")
                 signal = self.generate_signal(code)
                 
                 if signal['signal'] == 'BUY' and signal['confidence'] >= 0.6:

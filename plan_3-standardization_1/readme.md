@@ -41,6 +41,12 @@ python run_weekly_update.py
 python run_weekly_update.py --test
 ```
 
+### 4. 每日交易系统（使用已有数据跳过更新）
+```bash
+# 跳过数据更新步骤，直接基于现有数据库数据生成持仓监控、卖出建议、买入推荐等后续流程
+python daily_trading_system.py --skip-update
+```
+
 ## 数据库结构
 
 ### stocks 表（股票基本信息）
@@ -60,6 +66,47 @@ python run_weekly_update.py --test
 
 ### stock_weekly 表（周线数据）
 - 同日线数据结构
+
+## 因子列表（stock_operators）
+
+策略在 [trading_strategy.py](file:///mnt/d/forCoding_code/QuantFinance/plan_3-standardization_1/trading_strategy.py) 中通过各算子类的 `calculate()` 计算因子，并把返回的字段合并为因子字典。
+
+| 算子函数名 | 因子字段 | 中文含义 | 备注 |
+|---|---|---|---|
+| `CrossMAOperator.calculate` | `cross_ma_2w` | 过去2周内是否出现“一阳穿四线”（周线） |  |
+| `CrossMAOperator.calculate` | `cross_ma_4w` | 过去4周内是否出现“一阳穿四线”（周线） |  |
+| `CrossMAOperator.calculate` | `cross_ma_8w` | 过去8周内是否出现“一阳穿四线”（周线） |  |
+| `STStockOperator.calculate` | `is_st` | 是否 ST / 风险警示 / 退市等特殊标记 |  |
+| `LimitUpOperator.calculate` | `has_limit_up` | 近一周（日线5个交易日）是否出现涨停 |  |
+| `LimitUpOperator.calculate` | `has_limit_up_pullback` | 近一周是否出现“涨停后回调”形态 |  |
+| `VolumeBreakOperator.calculate` | `volume_break_count` | 75周内“放量突破20周线”的次数 |  |
+| `VolumeBreakOperator.calculate` | `volume_break_ge_2` | 放量突破次数是否≥2 |  |
+| `MADivergenceOperator.calculate` | `ma_divergence` | 5/10/20周均线是否多头排列且走强（发散走多） |  |
+| `BreakthroughPullbackOperator.calculate` | `breakthrough_pullback` | 最近一次突破20周线后，是否出现缩量回调且不跌破突破周收盘价 |  |
+| `ListingDateOperator.calculate` | `listing_days` | 上市天数 |  |
+| `ListingDateOperator.calculate` | `listing_gt_240` | 上市是否超过240天 |  |
+| `WeeklyBreakoutOperator.calculate` | `weekly_breakout_20w` | 是否突破近20周新高且收盘在MA20上方 |  |
+| `WeeklyBreakoutOperator.calculate` | `weekly_breakout_20w_volume` | 是否突破近20周新高且放量（成交量>20周均量*1.2） |  |
+| `PullbackMA20ReboundOperator.calculate` | `pullback_ma20_rebound` | 近几日是否回踩日线MA20附近并出现反弹确认 |  |
+| `WeeklyMASlopeOperator.calculate` | `weekly_ma20_slope` | 周线MA20最近斜率（近两周变化率） |  |
+| `WeeklyMASlopeOperator.calculate` | `weekly_ma20_up_3w` | 周线MA20是否连续3周上行 |  |
+| `DailyBBSqueezeOperator.calculate` | `bb_width` | 布林带宽度（(上轨-下轨)/MA20） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyBBSqueezeOperator.calculate` | `bb_squeeze` | 是否布林带挤压（宽度接近近40日最低） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyBBSqueezeOperator.calculate` | `bb_breakout` | 是否向上突破布林上轨 | 慢因子（需 `--enable-slow-factors`） |
+| `DailyBBSqueezeOperator.calculate` | `bb_squeeze_breakout` | 是否“挤压+突破+放量”组合信号 | 慢因子（需 `--enable-slow-factors`） |
+| `DailyAR1ReturnOperator.calculate` | `ts_ar1_phi` | 日线对数收益AR(1)系数 φ | 慢因子（需 `--enable-slow-factors`） |
+| `DailyAR1ReturnOperator.calculate` | `ts_ar1_pred_next` | AR(1)预测的下一期收益（对数收益） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyAR1ReturnOperator.calculate` | `ts_ar1_r2` | AR(1)拟合优度 R² | 慢因子（需 `--enable-slow-factors`） |
+| `DailyAR1ReturnOperator.calculate` | `ts_ar1_momentum` | AR(1)动量信号（φ>0.1 且预测收益>0） | 慢因子（需 `--enable-slow-factors`） |
+| `WeeklyAR1ReturnOperator.calculate` | `ts_w_ar1_phi` | 周线对数收益AR(1)系数 φ | 慢因子（需 `--enable-slow-factors`） |
+| `WeeklyAR1ReturnOperator.calculate` | `ts_w_ar1_pred_next` | 周线AR(1)预测的下一期收益（对数收益） | 慢因子（需 `--enable-slow-factors`） |
+| `WeeklyAR1ReturnOperator.calculate` | `ts_w_ar1_momentum` | 周线AR(1)动量信号（φ>0.1 且预测收益>0） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyHurstOperator.calculate` | `ts_hurst` | Hurst 指数（趋势性>0.5，均值回归<0.5） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyHurstOperator.calculate` | `ts_hurst_trend` | 是否偏趋势（H>0.55） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyHurstOperator.calculate` | `ts_hurst_mean_revert` | 是否偏均值回归（H<0.45） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyVolatilityRegimeOperator.calculate` | `ts_vol_ratio` | 波动率状态比值（快EWMA波动/慢EWMA波动） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyVolatilityRegimeOperator.calculate` | `ts_vol_high` | 是否高波动状态（ratio>1.3） | 慢因子（需 `--enable-slow-factors`） |
+| `DailyVolatilityRegimeOperator.calculate` | `ts_vol_low` | 是否低波动状态（ratio<0.8） | 慢因子（需 `--enable-slow-factors`） |
 
 ## 增量更新逻辑
 
