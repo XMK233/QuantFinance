@@ -866,6 +866,11 @@ def main():
     parser.add_argument('--enable-slow-factors', action='store_true', help='启用耗时较长的复杂因子（默认关闭以加快运行）')
     parser.add_argument('--factor-progress', action='store_true', help='打印因子计算进度（会输出当前股票正在计算的因子）')
     parser.add_argument('--simple-filter', action='store_true', help='仅用简单过滤：非ST、沪深主板、股价<30元、过去3周一阳穿四线')
+    parser.add_argument('--mode', type=str, default='process', 
+                       choices=['single', 'thread', 'process'],
+                       help='并发模式: single(单线程), thread(多线程), process(多进程，默认)')
+    parser.add_argument('--workers', type=int, default=6,
+                       help='工作进程/线程数 (默认: 6)')
     args = parser.parse_args()
 
     global MAX_HOLDINGS
@@ -876,7 +881,11 @@ def main():
     
     # 更新数据
     if not args.recommend_only and not args.skip_update:
-        update_daily_data()
+        update_daily_data(
+            force_weekly=False,
+            concurrency_mode=args.mode,
+            max_workers=args.workers
+        )
     elif args.skip_update and not args.recommend_only:
         print("⏭️ 已跳过数据更新（--skip-update），使用现有数据库数据")
     

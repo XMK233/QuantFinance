@@ -4,3 +4,4 @@
 *.pyc
 *.csv
 *.txt
+/plan_4-policy_1/backtest_results_gpu

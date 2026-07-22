@@ -13,7 +13,10 @@ from bao_data_downloader import BaoStockDownloader
 def main():
     parser = argparse.ArgumentParser(description='股票数据增量更新脚本')
     parser.add_argument('--db', default=None, help='数据库文件路径（默认在数据目录）')
-    parser.add_argument('--workers', type=int, default=4, help='并发进程数')
+    parser.add_argument('--mode', type=str, default='process', 
+                       choices=['single', 'thread', 'process'],
+                       help='并发模式: single(单线程), thread(多线程), process(多进程，默认)')
+    parser.add_argument('--workers', type=int, default=4, help='并发进程/线程数')
     parser.add_argument('--test', action='store_true', help='测试模式，只处理少量股票')
     parser.add_argument('--debug', action='store_true', help='调试模式，显示详细检测信息')
     args = parser.parse_args()
@@ -24,6 +27,7 @@ def main():
     print(f"🎯 === 股票数据增量更新开始 ===")
     print(f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"💾 数据库: {args.db}")
+    print(f"📋 并发模式: {args.mode}")
     print(f"⚡ 并发数: {args.workers}")
     print("-" * 50)
     
@@ -46,11 +50,11 @@ def main():
         
         # 2. 增量更新日线数据
         print("\n📈 2. 增量更新日线数据")
-        downloader.incremental_update('d', max_workers=args.workers, stock_list=stock_list, debug_mode=args.debug)
+        downloader.incremental_update('d', max_workers=args.workers, stock_list=stock_list, debug_mode=args.debug, concurrency_mode=args.mode)
         
         # 3. 增量更新周线数据
         print("\n📊 3. 增量更新周线数据")
-        downloader.incremental_update('w', max_workers=args.workers, stock_list=stock_list, debug_mode=args.debug)
+        downloader.incremental_update('w', max_workers=args.workers, stock_list=stock_list, debug_mode=args.debug, concurrency_mode=args.mode)
         
         print(f"\n✅ === 更新完成 ===")
         print(f"⏰ 完成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

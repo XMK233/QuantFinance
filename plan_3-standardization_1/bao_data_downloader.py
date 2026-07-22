@@ -181,12 +181,24 @@ class BaoStockDownloader:
         except Exception as e:
             return False, f"异常: {str(e)}"
     
-    def incremental_update(self, frequency: str = 'd', max_workers: int = 6, stock_list=None, debug_mode=False):
-        """增量更新所有股票数据 - 使用高效并行下载（类似 bao_get_single_stock.py）"""
+    def incremental_update(self, frequency: str = 'd', max_workers: int = 6, stock_list=None, debug_mode=False, concurrency_mode='process'):
+        """
+        增量更新所有股票数据 - 支持多种并发模式
+        
+        Args:
+            frequency: 数据频率，'d' 表示日线，'w' 表示周线
+            max_workers: 最大工作进程/线程数
+            stock_list: 股票列表，如果为None则自动获取
+            debug_mode: 调试模式
+            concurrency_mode: 并发模式，可选值：
+                - 'single': 单线程模式（避免baostock限制）
+                - 'thread': 多线程模式
+                - 'process': 多进程模式（默认）
+        """
         freq_name = '日' if frequency == 'd' else '周'
         freq_flag = frequency  # 'd' 或 'w'
         
-        print(f"🚀 开始高效并行增量更新{freq_name}线数据...")
+        print(f"🚀 开始增量更新{freq_name}线数据 (模式: {concurrency_mode})...")
         
         if debug_mode:
             from datetime import datetime
@@ -279,34 +291,27 @@ class BaoStockDownloader:
         fail_count = 0
         total_data_count = 0
         
-        # 使用进程池并行下载，每个进程独立登录
-        with ProcessPoolExecutor(
-            max_workers=max_workers,
-            initializer=self._init_worker,
-            mp_context=mp.get_context("spawn"),
-        ) as executor:
-            # 提交所有下载任务
-            futures = {}
-            for code, start_date, end_date in update_tasks:
-                future = executor.submit(self._download_and_process_stock_optimized, code, freq_flag, start_date, end_date)
-                futures[future] = code
+        # 根据并发模式选择不同的执行方式
+        if concurrency_mode == 'single':
+            print(f"  🐌 单线程模式处理 {len(update_tasks)} 只股票...")
             
-            with tqdm(total=len(futures), desc=f"{freq_name}线并行下载", unit="股") as pbar:
-                for future in as_completed(futures):
-                    code = futures[future]
+            # 单线程顺序处理
+            with tqdm(total=len(update_tasks), desc=f"{freq_name}线单线程下载", unit="股") as pbar:
+                for code, start_date, end_date in update_tasks:
                     try:
-                        # 添加超时机制，防止单个股票下载卡住
-                        success, data_count, msg = future.result(timeout=30)  # 30秒超时
-                        if success:
+                        # 下载数据
+                        df, msg = self.download_stock_data(code, freq_flag, start_date, end_date)
+                        
+                        if df is not None and len(df) > 0:
+                            # 插入数据库
+                            freq_str = 'daily' if frequency == 'd' else 'weekly'
+                            self.db.insert_price_data(df, freq_str, show_progress=False)
                             success_count += 1
-                            total_data_count += data_count
+                            total_data_count += len(df)
                         else:
                             fail_count += 1
                             if "无数据" not in msg and "已是最新" not in msg:
                                 pbar.write(f"❌ [{code}] {msg}")
-                    except TimeoutError:
-                        fail_count += 1
-                        pbar.write(f"⏰ [{code}] 下载超时 (30秒)，已跳过")
                     except Exception as e:
                         fail_count += 1
                         pbar.write(f"❌ [{code}] 任务异常: {e}")
@@ -318,6 +323,90 @@ class BaoStockDownloader:
                         '数据': total_data_count
                     })
                     pbar.update(1)
+                    
+        elif concurrency_mode == 'thread':
+            print(f"  🧵 多线程模式处理 {len(update_tasks)} 只股票 (工作线程: {max_workers})...")
+            
+            # 多线程处理
+            from concurrent.futures import ThreadPoolExecutor
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 提交所有下载任务
+                futures = {}
+                for code, start_date, end_date in update_tasks:
+                    future = executor.submit(self._download_and_process_stock_thread, code, freq_flag, start_date, end_date)
+                    futures[future] = code
+                
+                with tqdm(total=len(futures), desc=f"{freq_name}线多线程下载", unit="股") as pbar:
+                    for future in as_completed(futures):
+                        code = futures[future]
+                        try:
+                            # 添加超时机制，防止单个股票下载卡住
+                            success, data_count, msg = future.result(timeout=30)  # 30秒超时
+                            if success:
+                                success_count += 1
+                                total_data_count += data_count
+                            else:
+                                fail_count += 1
+                                if "无数据" not in msg and "已是最新" not in msg:
+                                    pbar.write(f"❌ [{code}] {msg}")
+                        except TimeoutError:
+                            fail_count += 1
+                            pbar.write(f"⏰ [{code}] 下载超时 (30秒)，已跳过")
+                        except Exception as e:
+                            fail_count += 1
+                            pbar.write(f"❌ [{code}] 任务异常: {e}")
+                        
+                        # 更新进度条显示
+                        pbar.set_postfix({
+                            '成功': success_count, 
+                            '失败': fail_count,
+                            '数据': total_data_count
+                        })
+                        pbar.update(1)
+                        
+        else:  # process 模式
+            print(f"  ⚙️  多进程模式处理 {len(update_tasks)} 只股票 (工作进程: {max_workers})...")
+            
+            # 使用进程池并行下载，每个进程独立登录
+            with ProcessPoolExecutor(
+                max_workers=max_workers,
+                initializer=self._init_worker,
+                mp_context=mp.get_context("spawn"),
+            ) as executor:
+                # 提交所有下载任务
+                futures = {}
+                for code, start_date, end_date in update_tasks:
+                    future = executor.submit(self._download_and_process_stock_optimized, code, freq_flag, start_date, end_date)
+                    futures[future] = code
+                
+                with tqdm(total=len(futures), desc=f"{freq_name}线多进程下载", unit="股") as pbar:
+                    for future in as_completed(futures):
+                        code = futures[future]
+                        try:
+                            # 添加超时机制，防止单个股票下载卡住
+                            success, data_count, msg = future.result(timeout=30)  # 30秒超时
+                            if success:
+                                success_count += 1
+                                total_data_count += data_count
+                            else:
+                                fail_count += 1
+                                if "无数据" not in msg and "已是最新" not in msg:
+                                    pbar.write(f"❌ [{code}] {msg}")
+                        except TimeoutError:
+                            fail_count += 1
+                            pbar.write(f"⏰ [{code}] 下载超时 (30秒)，已跳过")
+                        except Exception as e:
+                            fail_count += 1
+                            pbar.write(f"❌ [{code}] 任务异常: {e}")
+                        
+                        # 更新进度条显示
+                        pbar.set_postfix({
+                            '成功': success_count, 
+                            '失败': fail_count,
+                            '数据': total_data_count
+                        })
+                        pbar.update(1)
         
         print(f"✅ {freq_name}线更新完成: 成功 {success_count}, 失败 {fail_count}, 新增数据 {total_data_count} 条")
         
@@ -332,6 +421,30 @@ class BaoStockDownloader:
         # 静默登录，避免重复输出
         bs.login()
         return
+    
+    def _download_and_process_stock_thread(self, stock_code, frequency, start_date, end_date):
+        """多线程版本的单个股票下载和处理"""
+        try:
+            # 随机延迟避免请求过于频繁
+            time.sleep(random.uniform(0.1, 0.5))
+            
+            # 下载数据
+            df, msg = self.download_stock_data(stock_code, frequency, start_date, end_date)
+            
+            if df is None:
+                return False, 0, msg
+            
+            if len(df) == 0:
+                return True, 0, "无新数据"
+            
+            # 插入数据库
+            freq_str = 'daily' if frequency == 'd' else 'weekly'
+            self.db.insert_price_data(df, freq_str, show_progress=False)
+            
+            return True, len(df), f"成功更新 {len(df)} 条数据"
+            
+        except Exception as e:
+            return False, 0, f"处理异常: {str(e)}"
     
     def _download_and_process_stock_optimized(self, stock_code, frequency, start_date, end_date):
         """优化版的单个股票下载和处理（用于并行执行）"""
@@ -372,22 +485,78 @@ class BaoStockDownloader:
             return False, 0, f"处理异常: {str(e)}"
 
 def main():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='baostock数据下载器 - 支持多种并发模式')
+    parser.add_argument('--mode', type=str, default='process', 
+                       choices=['single', 'thread', 'process'],
+                       help='并发模式: single(单线程), thread(多线程), process(多进程，默认)')
+    parser.add_argument('--workers', type=int, default=4,
+                       help='工作进程/线程数 (默认: 4)')
+    parser.add_argument('--skip-daily', action='store_true',
+                       help='跳过日线数据更新')
+    parser.add_argument('--skip-weekly', action='store_true',
+                       help='跳过周线数据更新')
+    parser.add_argument('--debug', action='store_true',
+                       help='启用调试模式')
+    parser.add_argument('--force-update', action='store_true',
+                       help='强制更新股票基本信息')
+    
+    args = parser.parse_args()
+    
+    print(f"📊 baostock数据下载器启动")
+    print(f"   📋 并发模式: {args.mode}")
+    print(f"   👷 工作数量: {args.workers}")
+    print(f"   🔍 调试模式: {'开启' if args.debug else '关闭'}")
+    print("-" * 60)
+    
     downloader = BaoStockDownloader()
     
     try:
         downloader.login()
         
         # 1. 更新股票基本信息
-        downloader.update_stock_info()
+        print("🔄 更新股票基本信息...")
+        downloader.update_stock_info(force_update=args.force_update)
         
         # 2. 增量更新日线数据
-        downloader.incremental_update('d', max_workers=4)
+        if not args.skip_daily:
+            print("\n📈 增量更新日线数据...")
+            success, data_count, msg = downloader.incremental_update(
+                frequency='d', 
+                max_workers=args.workers,
+                concurrency_mode=args.mode,
+                debug_mode=args.debug
+            )
+            if success:
+                print(f"✅ 日线数据更新完成: {msg}")
+            else:
+                print(f"⚠️  日线数据更新失败: {msg}")
+        else:
+            print("⏭️  跳过日线数据更新")
         
         # 3. 增量更新周线数据
-        downloader.incremental_update('w', max_workers=4)
+        if not args.skip_weekly:
+            print("\n📊 增量更新周线数据...")
+            success, data_count, msg = downloader.incremental_update(
+                frequency='w', 
+                max_workers=args.workers,
+                concurrency_mode=args.mode,
+                debug_mode=args.debug
+            )
+            if success:
+                print(f"✅ 周线数据更新完成: {msg}")
+            else:
+                print(f"⚠️  周线数据更新失败: {msg}")
+        else:
+            print("⏭️  跳过周线数据更新")
+        
+        print("\n🎉 数据更新任务完成!")
         
     except Exception as e:
-        print(f"程序执行出错: {e}")
+        print(f"❌ 程序执行出错: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         downloader.logout()
 
